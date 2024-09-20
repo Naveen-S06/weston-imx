@@ -29,7 +29,7 @@
  */
 
 #include "config.h"
-
+#include <xf86drm.h>
 #include <unistd.h>
 #include <signal.h>
 #include <errno.h>
@@ -3700,7 +3700,7 @@ out:
 
 	/* free(NULL) is valid, and it won't be NULL if it's used */
 	free(wet.parsed_options);
-	release_drm_lease(wet.drm_lease);
+	
 
 	if (protologger)
 		wl_protocol_logger_destroy(protologger);
