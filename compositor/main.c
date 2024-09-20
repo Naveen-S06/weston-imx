@@ -29,7 +29,7 @@
  */
 
 #include "config.h"
-#include <xf86drm.h>
+
 #include <unistd.h>
 #include <signal.h>
 #include <errno.h>
