@@ -1,4 +1,4 @@
-dep_scanner = dependency('wayland-scanner', native: false)
+dep_scanner = dependency('wayland-scanner', native: true)
 prog_scanner = find_program(dep_scanner.get_pkgconfig_variable('wayland_scanner'))
 
 dep_wp = dependency('wayland-protocols', version: '>= 1.24')
@@ -37,8 +37,6 @@ generated_protocols = [
 	[ 'xdg-output', 'v1' ],
 	[ 'xdg-shell', 'v6' ],
 	[ 'xdg-shell', 'stable' ],
-	[ 'alpha-compositing', 'v1' ],
-	[ 'hdr10-metadata', 'v1' ],
 ]
 
 foreach proto: generated_protocols

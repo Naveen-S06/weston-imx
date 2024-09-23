@@ -1289,7 +1289,6 @@ struct weston_view {
 	struct weston_surface *surface;
 	struct wl_list surface_link;
 	struct wl_signal destroy_signal;
-	struct wl_signal unmap_signal;
 
 	/* struct weston_paint_node::view_link */
 	struct wl_list paint_node_list;
@@ -1305,8 +1304,6 @@ struct weston_view {
 
 	pixman_region32_t clip;          /* See weston_view_damage_below() */
 	float alpha;                     /* part of geometry, see below */
-	float blending_alpha;
-	int blending_equation;
 
 	/* Surface geometry state, mutable.
 	 * If you change anything, call weston_surface_geometry_dirty().
@@ -1416,10 +1413,6 @@ struct weston_surface_state {
 
 	/* weston_protected_surface.enforced/relaxed */
 	enum weston_surface_protection_mode protection_mode;
-
-	/* zwp_blending_v1 */
-	float blending_alpha;
-	int blending_equation;
 };
 
 struct weston_surface_activation_data {
@@ -1448,7 +1441,7 @@ struct weston_pointer_constraint {
 	bool hint_is_pending;
 
 	struct wl_listener pointer_destroy_listener;
-	struct wl_listener view_unmap_listener;
+	struct wl_listener surface_destroy_listener;
 	struct wl_listener surface_commit_listener;
 	struct wl_listener surface_activate_listener;
 };
@@ -1504,8 +1497,6 @@ struct weston_surface {
 
 	/* wp_viewport resource for this surface */
 	struct wl_resource *viewport_resource;
-
-	struct wl_resource *blending_resource;
 
 	/* All the pending state, that wl_surface.commit will apply. */
 	struct weston_surface_state pending;

@@ -1,6 +1,6 @@
 project('weston',
 	'c',
-	version: '10.0.5',
+	version: '10.0.2',
 	default_options: [
 		'warning_level=3',
 		'c_std=gnu99',
@@ -71,19 +71,6 @@ foreach a : global_args_maybe
 		global_args += a
 	endif
 endforeach
-
-if get_option('egl')
-	global_args += '-DENABLE_EGL'
-endif
-
-if get_option('opengl')
-    config_h.set('ENABLE_OPENGL', '1')
-endif
-
-if get_option('imxgpu')
-    config_h.set('ENABLE_IMXGPU', '1')
-endif
-
 add_global_arguments(global_args, language: 'c')
 
 if cc.has_header_symbol('sys/sysmacros.h', 'major')
@@ -167,15 +154,12 @@ dep_libm = cc.find_library('m')
 dep_libdl = cc.find_library('dl')
 dep_libdrm = dependency('libdrm', version: '>= 2.4.95')
 dep_libdrm_headers = dep_libdrm.partial_dependency(compile_args: true)
-dep_libdrm_107 = dependency('libdrm', version: '>= 2.4.107', required:false)
 dep_threads = dependency('threads')
 
-drm_cflags = []
 dep_libdrm_version = dep_libdrm.version()
 if dep_libdrm_version.version_compare('>=2.4.107')
   message('Found libdrm with human format modifier support.')
   config_h.set('HAVE_HUMAN_FORMAT_MODIFIER', '1')
-  drm_cflags = ['-DUSE_DRM_FORMAT_NV15']
 endif
 
 prog_python = import('python').find_installation('python3')

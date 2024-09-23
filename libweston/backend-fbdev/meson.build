@@ -1,4 +1,4 @@
-if not get_option('backend-fbdev')
+if not get_option('deprecated-backend-fbdev')
 	subdir_done()
 endif
 
@@ -18,14 +18,6 @@ deps_fbdev = [
 	dep_libinput_backend,
 	dependency('libudev', version: '>= 136'),
 ]
-
-if get_option('imxgpu')
-	dep_egl = dependency('egl', required: false)
-	if not dep_egl.found()
-		error('fbdev-backend with i.MX GPU requires egl which was not found.')
-	endif
-	deps_fbdev += dep_egl
-endif
 
 plugin_fbdev = shared_library(
 	'fbdev-backend',

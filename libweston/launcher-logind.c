@@ -77,7 +77,6 @@ launcher_logind_take_device(struct launcher_logind *wl, uint32_t major,
 	bool b;
 	int r, fd;
 	dbus_bool_t paused;
-	int loop = 0;
 
 	m = dbus_message_new_method_call("org.freedesktop.login1",
 					 wl->spath,
@@ -95,14 +94,10 @@ launcher_logind_take_device(struct launcher_logind *wl, uint32_t major,
 		goto err_unref;
 	}
 
-retry:
 	reply = dbus_connection_send_with_reply_and_block(wl->dbus, m,
 							  -1, NULL);
 	if (!reply) {
-		sleep(1);
 		weston_log("logind: TakeDevice on %d:%d failed.\n", major, minor);
-		if(loop++ < 10)
-			goto retry;
 		r = -ENODEV;
 		goto err_unref;
 	}
@@ -501,11 +496,10 @@ device_paused(struct launcher_logind *wl, DBusMessage *m)
 	 * "gone" means the device is gone. We handle it the same as "force" as
 	 * a following udev event will be caught, too.
 	 *
-	 * If it's our main DRM device and not "gone", tell the compositor to go asleep. */
+	 * If it's our main DRM device, tell the compositor to go asleep. */
+
 	if (!strcmp(type, "pause"))
 		launcher_logind_pause_device_complete(wl, major, minor);
-	else if (strcmp(type, "gone") == 0)
-		return;
 
 	if (wl->sync_drm && wl->compositor->backend->device_changed)
 		wl->compositor->backend->device_changed(wl->compositor,

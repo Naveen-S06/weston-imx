@@ -40,8 +40,6 @@ srcs_libweston = [
 	linux_dmabuf_unstable_v1_server_protocol_h,
 	linux_explicit_synchronization_unstable_v1_protocol_c,
 	linux_explicit_synchronization_unstable_v1_server_protocol_h,
-	alpha_compositing_unstable_v1_protocol_c,
-	alpha_compositing_unstable_v1_server_protocol_h,
 	input_method_unstable_v1_protocol_c,
 	input_method_unstable_v1_server_protocol_h,
 	input_timestamps_unstable_v1_protocol_c,
@@ -80,18 +78,9 @@ if get_option('renderer-gl')
 	deps_libweston += dep_egl
 endif
 
-if get_option('renderer-g2d')
-	dep_egl = dependency('egl', required: false)
-	if not dep_egl.found()
-		error('libweston + g2d-renderer requires egl which was not found. Or, you can use \'-Drenderer-g2d=false\'.')
-	endif
-	deps_libweston += dep_egl
-endif
-
 lib_weston = shared_library(
 	'weston-@0@'.format(libweston_major),
 	srcs_libweston,
-	c_args: drm_cflags,
 	include_directories: common_inc,
 	install: true,
 	version: '0.0.@0@'.format(libweston_revision),
@@ -260,7 +249,6 @@ endif
 
 subdir('color-lcms')
 subdir('renderer-gl')
-subdir('renderer-g2d')
 subdir('backend-drm')
 subdir('backend-fbdev')
 subdir('backend-headless')

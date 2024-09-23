@@ -10,7 +10,7 @@
  * distribute, sublicense, and/or sell copies of the Software, and to
  * permit persons to whom the Software is furnished to do so, subject to
  * the following conditions:
- *bool use_pixman_shadow;
+ *
  * The above copyright notice and this permission notice (including the
  * next paragraph) shall be included in all copies or substantial
  * portions of the Software.
@@ -177,13 +177,6 @@ struct weston_drm_backend_config {
 	/** Whether to use the pixman renderer instead of the OpenGL ES renderer. */
 	bool use_pixman;
 
-#if defined(ENABLE_IMXG2D)
-	/** Whether to use the g2d renderer instead of the OpenGL ES renderer. */
-	bool use_g2d;
-#endif
-
-	bool enable_overlay_view;
-
 	/** The seat to be used for input and output.
 	 *
 	 * If seat_id is NULL, the seat is taken from XDG_SEAT environment
@@ -230,17 +223,6 @@ struct weston_drm_backend_config {
 
 	/** Use shadow buffer if using Pixman-renderer. */
 	bool use_pixman_shadow;
-
-	/** Desktop shell size */
-	uint32_t shell_width;
-	uint32_t shell_height;
-	
-      	/** DRM device file descriptor to use
-         *
-         * An openeded DRM device file descriptor.  If <0, open a DRM
-         * device in the backend using `specific_device` or heuristics.
-         */
-        int device_fd;
 };
 
 #ifdef  __cplusplus

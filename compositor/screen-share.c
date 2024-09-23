@@ -820,8 +820,6 @@ shared_output_repainted(struct wl_listener *listener, void *data)
 {
 	struct shared_output *so =
 		container_of(listener, struct shared_output, frame_listener);
-	struct weston_config *config;
-	struct weston_config_section *section;
 	pixman_region32_t damage;
 	pixman_region32_t *current_damage = data;
 	struct ss_shm_buffer *sb;
@@ -830,13 +828,6 @@ shared_output_repainted(struct wl_listener *listener, void *data)
 	pixman_box32_t *r;
 	pixman_image_t *damaged_image;
 	pixman_transform_t transform;
-
-	uint32_t use_g2d;
-
-	config = wet_get_config(so->output->compositor);
-	section = weston_config_get_section(config, "core", NULL, NULL);
-
-	weston_config_section_get_uint(section, "use-g2d", &use_g2d, 0);
 
 	width = so->output->current_mode->width;
 	height = so->output->current_mode->height;
@@ -885,7 +876,7 @@ shared_output_repainted(struct wl_listener *listener, void *data)
 		width = r[i].x2 - r[i].x1;
 		height = r[i].y2 - r[i].y1;
 
-		if (do_yflip && !use_g2d)
+		if (do_yflip)
 			y_orig = so->output->current_mode->height - r[i].y2;
 		else
 			y_orig = y;
