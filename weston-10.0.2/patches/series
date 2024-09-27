@@ -1,0 +1,8 @@
+0001-libweston-Send-name-description-update-wl_output-to-.patch -p1
+0001-libweston-desktop-xdg-shell-Add-tiled-orientation-st.patch -p1
+0001-simple-touch-Add-maximized-fullscreen-states.patch -p1
+0001-backend-drm-make-sure-all-buffers-are-released-when-.patch -p1
+0001-libweston-weston-log-Add-a-iterator-helper-for-debug.patch -p1
+0001-backend-drm-Add-method-to-import-DRM-fd.patch -p1
+0002-Add-DRM-lease-support.patch -p1
+0001-compositor-do-not-request-repaint-in-output_enable.patch -p1
