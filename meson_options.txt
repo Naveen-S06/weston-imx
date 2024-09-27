@@ -45,7 +45,7 @@ option(
 	description: 'Weston backend: X11 (nested)'
 )
 option(
-	'backend-fbdev',
+	'deprecated-backend-fbdev',
 	type: 'boolean',
 	value: false,
 	description: 'Weston backend: fbdev (deprecated)'
