@@ -44,12 +44,7 @@ option(
 	value: true,
 	description: 'Weston backend: X11 (nested)'
 )
-option(
-	'deprecated-backend-fbdev',
-	type: 'boolean',
-	value: false,
-	description: 'Weston backend: fbdev (deprecated)'
-)
+
 option(
 	'backend-default',
 	type: 'combo',
