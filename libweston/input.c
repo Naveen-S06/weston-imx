@@ -3655,8 +3655,8 @@ enable_pointer_constraint(struct weston_pointer_constraint *constraint,
 	constraint->view = view;
 	pointer_constraint_notify_activated(constraint);
 	weston_pointer_start_grab(constraint->pointer, &constraint->grab);
-	wl_list_remove(&constraint->surface_destroy_listener.link);
-	wl_list_init(&constraint->surface_destroy_listener.link);
+	wl_signal_add(&constraint->view->unmap_signal,
+		      &constraint->view_unmap_listener);
 }
 
 static bool
@@ -3671,6 +3671,8 @@ weston_pointer_constraint_disable(struct weston_pointer_constraint *constraint)
 	constraint->view = NULL;
 	pointer_constraint_notify_deactivated(constraint);
 	weston_pointer_end_grab(constraint->grab.pointer);
+	wl_list_remove(&constraint->view_unmap_listener.link);
+	wl_list_init(&constraint->view_unmap_listener.link);
 }
 
 void
@@ -3680,7 +3682,6 @@ weston_pointer_constraint_destroy(struct weston_pointer_constraint *constraint)
 		weston_pointer_constraint_disable(constraint);
 
 	wl_list_remove(&constraint->pointer_destroy_listener.link);
-	wl_list_remove(&constraint->surface_destroy_listener.link);
 	wl_list_remove(&constraint->surface_commit_listener.link);
 	wl_list_remove(&constraint->surface_activate_listener.link);
 
@@ -3877,13 +3878,13 @@ pointer_constraint_pointer_destroyed(struct wl_listener *listener, void *data)
 }
 
 static void
-pointer_constraint_surface_destroyed(struct wl_listener *listener, void *data)
+pointer_constraint_view_unmapped(struct wl_listener *listener, void *data)
 {
-	struct weston_pointer_constraint *constraint =
-		container_of(listener, struct weston_pointer_constraint,
-			     surface_destroy_listener);
+        struct weston_pointer_constraint *constraint =
+                container_of(listener, struct weston_pointer_constraint,
+                             view_unmap_listener);
 
-	weston_pointer_constraint_destroy(constraint);
+        disable_pointer_constraint(constraint);
 }
 
 static void
@@ -3947,8 +3948,8 @@ weston_pointer_constraint_create(struct weston_surface *surface,
 
 	constraint->surface_activate_listener.notify =
 		pointer_constraint_surface_activate;
-	constraint->surface_destroy_listener.notify =
-		pointer_constraint_surface_destroyed;
+	constraint->view_unmap_listener.notify =
+		pointer_constraint_view_unmapped;
 	constraint->surface_commit_listener.notify =
 		pointer_constraint_surface_committed;
 	constraint->pointer_destroy_listener.notify =
@@ -3958,8 +3959,6 @@ weston_pointer_constraint_create(struct weston_surface *surface,
 		      &constraint->surface_activate_listener);
 	wl_signal_add(&pointer->destroy_signal,
 		      &constraint->pointer_destroy_listener);
-	wl_signal_add(&surface->destroy_signal,
-		      &constraint->surface_destroy_listener);
 	wl_signal_add(&surface->commit_signal,
 		      &constraint->surface_commit_listener);
 
@@ -4729,6 +4728,7 @@ maybe_warp_confined_pointer(struct weston_pointer_constraint *constraint)
 		pixman_region32_intersect(&confine_region,
 					  &constraint->view->surface->input,
 					  &constraint->region);
+		assert(pixman_region32_not_empty(&confine_region));
 		region_to_outline(&confine_region, &borders);
 		pixman_region32_fini(&confine_region);
 

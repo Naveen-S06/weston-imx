@@ -29,6 +29,8 @@ srcs_drm = [
 	linux_dmabuf_unstable_v1_protocol_c,
 	linux_dmabuf_unstable_v1_server_protocol_h,
 	presentation_time_server_protocol_h,
+	hdr10_metadata_unstable_v1_protocol_c,
+	hdr10_metadata_unstable_v1_server_protocol_h,
 ]
 
 deps_drm = [
@@ -41,8 +43,16 @@ deps_drm = [
 	dep_backlight
 ]
 
+if get_option('imxgpu')
+	dep_egl = dependency('egl', required: false)
+	if not dep_egl.found()
+		error('drm-backend with i.MX GPU requires egl which was not found.')
+	endif
+	deps_drm += dep_egl
+endif
+
 if get_option('renderer-gl')
-	dep_gbm = dependency('gbm', required: false)
+	dep_gbm = dependency('gbm', required: false, version: '>= 21.1.1')
 	if not dep_gbm.found()
 		error('drm-backend with GL renderer requires gbm which was not found. Or, you can use \'-Drenderer-gl=false\'.')
 	endif
@@ -86,6 +96,7 @@ endif
 plugin_drm = shared_library(
 	'drm-backend',
 	srcs_drm,
+	c_args: drm_cflags,
 	include_directories: common_inc,
 	dependencies: deps_drm,
 	name_prefix: '',

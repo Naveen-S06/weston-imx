@@ -44,7 +44,12 @@ option(
 	value: true,
 	description: 'Weston backend: X11 (nested)'
 )
-
+option(
+	'backend-fbdev',
+	type: 'boolean',
+	value: false,
+	description: 'Weston backend: fbdev (deprecated)'
+)
 option(
 	'backend-default',
 	type: 'combo',
@@ -126,14 +131,14 @@ option(
 	'pipewire',
 	type: 'boolean',
 	value: true,
-	description: 'Virtual remote output with Pipewire on DRM backend'
-)
-
+      	description: 'Virtual remote output with Pipewire on DRM backend'
+)          
+           
 option(
-        'drm-lease',
-        type: 'boolean',
-        value: false,
-        description: 'Support for running weston with a leased DRM Master'
+	'drm-lease',
+	type: 'boolean',
+	value: false,
+      	description: 'Support for running weston with a leased DRM Master'
 )
 
 option(

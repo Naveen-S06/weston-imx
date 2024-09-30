@@ -64,13 +64,9 @@ struct touch {
 	struct xdg_toplevel *xdg_toplevel;
 	struct buffer *buffer;
 	int width, height;
-	int init_width, init_height;
 	bool running;
 	bool wait_for_configure;
-	bool needs_buffer_update;
 	bool has_argb;
-	bool maximized;
-	bool fullscreen;
 };
 
 static struct buffer *
@@ -117,16 +113,13 @@ create_shm_buffer(struct touch *touch)
 }
 
 static void
-redraw(void *data)
+initial_redraw(void *data)
 {
 	struct touch *touch = data;
 	struct buffer *buffer = NULL;
 
 	buffer = create_shm_buffer(touch);
 	assert(buffer);
-
-	if (touch->buffer)
-		free(touch->buffer);
 
 	touch->buffer = buffer;
 
@@ -292,10 +285,9 @@ handle_xdg_surface_configure(void *data, struct xdg_surface *surface,
 
 	xdg_surface_ack_configure(surface, serial);
 
-	if (touch->wait_for_configure || touch->needs_buffer_update) {
-		redraw(touch);
+	if (touch->wait_for_configure) {
+		initial_redraw(touch);
 		touch->wait_for_configure = false;
-		touch->needs_buffer_update = false;
 	}
 }
 
@@ -350,40 +342,9 @@ static const struct wl_registry_listener registry_listener = {
 
 static void
 handle_toplevel_configure(void *data, struct xdg_toplevel *xdg_toplevel,
-		          int32_t width, int32_t height, struct wl_array *states)
+			      int32_t width, int32_t height,
+			      struct wl_array *state)
 {
-	struct touch *touch = data;
-	uint32_t *p;
-
-	touch->fullscreen = false;
-	touch->maximized = false;
-
-	wl_array_for_each(p, states) {
-		uint32_t state = *p;
-		switch (state) {
-		case XDG_TOPLEVEL_STATE_FULLSCREEN:
-			touch->fullscreen = true;
-			break;
-		case XDG_TOPLEVEL_STATE_MAXIMIZED:
-			touch->maximized = true;
-			break;
-		}
-	}
-
-	if (width > 0 && height > 0) {
-		if (!touch->fullscreen && !touch->maximized) {
-			touch->init_width = width;
-			touch->init_width = height;
-		}
-		touch->width = width;
-		touch->height = height;
-	} else if (!touch->fullscreen && !touch->maximized) {
-		touch->width = touch->init_width;
-		touch->height = touch->init_height;
-
-	}
-
-	touch->needs_buffer_update = true;
 }
 
 static void
@@ -412,7 +373,6 @@ touch_create(int width, int height)
 	assert(touch->display);
 
 	touch->has_argb = false;
-	touch->buffer = NULL;
 	touch->registry = wl_display_get_registry(touch->display);
 	wl_registry_add_listener(touch->registry, &registry_listener, touch);
 	wl_display_dispatch(touch->display);
@@ -428,8 +388,8 @@ touch_create(int width, int height)
 		exit(1);
 	}
 
-	touch->init_width = width;
-	touch->init_height = height;
+	touch->width = width;
+	touch->height = height;
 	touch->surface = wl_compositor_create_surface(touch->compositor);
 
 	touch->xdg_surface =
@@ -445,7 +405,6 @@ touch_create(int width, int height)
 	xdg_toplevel_set_title(touch->xdg_toplevel, "simple-touch");
 	xdg_toplevel_set_app_id(touch->xdg_toplevel, "simple-touch");
 	touch->wait_for_configure = true;
-	touch->needs_buffer_update = false;
 	wl_surface_commit(touch->surface);
 
 	touch->running = true;

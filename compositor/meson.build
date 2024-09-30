@@ -25,6 +25,7 @@ if get_option('xwayland')
 	srcs_weston += 'xwayland.c'
 	config_h.set_quoted('XSERVER_PATH', get_option('xwayland-path'))
 endif
+
 if get_option('drm-lease')
 	deps_weston += dependency('libdlmclient')
 	srcs_weston += 'drm-lease.c'

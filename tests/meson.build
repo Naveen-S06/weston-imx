@@ -224,12 +224,6 @@ tests = [
 		],
 		'dep_objs': [ dep_lib_desktop ]
 	},
-	{	'name': 'iterate-debug-scopes',
-		'sources': [
-		  'iterate-debug-scopes-test.c',
-		],
-		'dep_objs': [ dep_libweston_public ]
-	},
 ]
 
 tests_standalone = [

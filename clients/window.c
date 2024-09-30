@@ -352,8 +352,11 @@ struct input {
 	struct toytimer cursor_timer;
 	bool cursor_timer_running;
 	struct wl_surface *pointer_surface;
+	bool pointer_surface_has_role;
+	int hotspot_x, hotspot_y;
 	uint32_t modifiers;
 	uint32_t pointer_enter_serial;
+	uint32_t cursor_serial;
 	float sx, sy;
 	struct wl_list link;
 
@@ -2748,12 +2751,6 @@ input_remove_pointer_focus(struct input *input)
 	input->pointer_focus = NULL;
 	input->current_cursor = CURSOR_UNSET;
 	cancel_pointer_image_update(input);
-	wl_surface_destroy(input->pointer_surface);
-	input->pointer_surface = NULL;
-	if (input->cursor_frame_cb) {
-		wl_callback_destroy(input->cursor_frame_cb);
-		input->cursor_frame_cb = NULL;
-	}
 }
 
 static void
@@ -2781,6 +2778,16 @@ pointer_handle_enter(void *data, struct wl_pointer *pointer,
 	input->display->serial = serial;
 	input->pointer_enter_serial = serial;
 	input->pointer_focus = window;
+
+	/* Some compositors advertise wl_seat before wl_compositor. This
+	 * makes it potentially impossible to create the pointer surface
+	 * when we bind the seat, so we need to create our pointer surface
+	 * now instead.
+	 */
+	if (!input->pointer_surface)
+		input->pointer_surface = wl_compositor_create_surface(input->display->compositor);
+
+	input->pointer_surface_has_role = false;
 
 	input->sx = sx;
 	input->sy = sy;
@@ -3793,8 +3800,7 @@ input_set_pointer_image_index(struct input *input, int index)
 	struct wl_buffer *buffer;
 	struct wl_cursor *cursor;
 	struct wl_cursor_image *image;
-	struct wl_surface *prev_surface;
-	struct display *d = input->display;
+	int dx = 0, dy = 0;
 
 	if (!input->pointer)
 		return;
@@ -3813,21 +3819,24 @@ input_set_pointer_image_index(struct input *input, int index)
 	if (!buffer)
 		return;
 
-	/* Don't re-use the previous surface, otherwise the new buffer and the
-	 * new hotspot aren't applied atomically. */
-	prev_surface = input->pointer_surface;
-	input->pointer_surface = wl_compositor_create_surface(d->compositor);
-
-	wl_surface_attach(input->pointer_surface, buffer, 0, 0);
+	if (input->pointer_surface_has_role) {
+		dx = input->hotspot_x - image->hotspot_x;
+		dy = input->hotspot_y - image->hotspot_y;
+	}
+	wl_surface_attach(input->pointer_surface, buffer, dx, dy);
 	wl_surface_damage(input->pointer_surface, 0, 0,
 			  image->width, image->height);
 	wl_surface_commit(input->pointer_surface);
-	wl_pointer_set_cursor(input->pointer, input->pointer_enter_serial,
-			      input->pointer_surface,
-			      image->hotspot_x, image->hotspot_y);
 
-	if (prev_surface)
-		wl_surface_destroy(prev_surface);
+	if (!input->pointer_surface_has_role) {
+		wl_pointer_set_cursor(input->pointer,
+				      input->pointer_enter_serial,
+				      input->pointer_surface,
+				      image->hotspot_x, image->hotspot_y);
+		input->pointer_surface_has_role = true;
+	}
+	input->hotspot_x = image->hotspot_x;
+	input->hotspot_y = image->hotspot_y;
 }
 
 static const struct wl_callback_listener pointer_surface_listener;
@@ -3839,11 +3848,14 @@ input_set_pointer_special(struct input *input)
 		wl_pointer_set_cursor(input->pointer,
 				      input->pointer_enter_serial,
 				      NULL, 0, 0);
+		input->pointer_surface_has_role = false;
 		return true;
 	}
 
-	if (input->current_cursor == CURSOR_UNSET)
+	if (input->current_cursor == CURSOR_UNSET) {
+		input->pointer_surface_has_role = false;
 		return true;
+	}
 
 	return false;
 }
@@ -3883,7 +3895,6 @@ schedule_pointer_image_update(struct input *input,
 	wl_callback_add_listener(input->cursor_frame_cb,
 				 &pointer_surface_listener, input);
 
-	wl_surface_commit(input->pointer_surface);
 }
 
 static void
@@ -3933,11 +3944,11 @@ pointer_surface_frame_callback(void *data, struct wl_callback *callback,
 					time - input->cursor_anim_start,
 					&duration);
 
-	input_set_pointer_image_index(input, i);
-
 	if (cursor->image_count > 1)
 		schedule_pointer_image_update(input, cursor, duration,
 					      force_frame);
+
+	input_set_pointer_image_index(input, i);
 }
 
 static void
@@ -3967,15 +3978,30 @@ static const struct wl_callback_listener pointer_surface_listener = {
 void
 input_set_pointer_image(struct input *input, int pointer)
 {
+	int force = 0;
+
 	if (!input->pointer)
 		return;
 
-	if (pointer == input->current_cursor)
+	if (input->pointer_enter_serial > input->cursor_serial)
+		force = 1;
+
+	if (!force && pointer == input->current_cursor)
 		return;
 
 	input->current_cursor = pointer;
+	input->cursor_serial = input->pointer_enter_serial;
 	if (!input->cursor_frame_cb)
 		pointer_surface_frame_callback(input, NULL, 0);
+	else if (force && !input_set_pointer_special(input)) {
+		/* The current frame callback may be stuck if, for instance,
+		 * the set cursor request was processed by the server after
+		 * this client lost the focus. In this case the cursor surface
+		 * might not be mapped and the frame callback wouldn't ever
+		 * complete. Send a set_cursor and attach to try to map the
+		 * cursor surface again so that the callback will finish */
+		input_set_pointer_image_index(input, 0);
+	}
 }
 
 struct wl_data_device *
@@ -5922,6 +5948,8 @@ display_add_input(struct display *d, uint32_t id, int display_seat_version)
 					    &data_device_listener,
 					    input);
 	}
+
+	input->pointer_surface_has_role = false;
 
 	toytimer_init(&input->cursor_timer, CLOCK_MONOTONIC, d,
 		      cursor_timer_func);

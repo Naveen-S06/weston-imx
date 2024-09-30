@@ -85,8 +85,8 @@ drm_output_add_zpos_plane(struct drm_plane *plane, struct wl_list *planes)
 	}
 
 	h_plane = wl_container_of(planes->next, h_plane, link);
-	if (h_plane->plane->zpos_max >= plane->zpos_max) {
-		wl_list_insert(planes->prev, &plane_zpos->link);
+	if (h_plane->plane->zpos_max <= plane->zpos_max) {
+		wl_list_insert(planes, &plane_zpos->link);
 	} else {
 		struct drm_plane_zpos *p_zpos = NULL;
 
@@ -96,7 +96,7 @@ drm_output_add_zpos_plane(struct drm_plane *plane, struct wl_list *planes)
 		}
 
 		wl_list_for_each(p_zpos, planes, link) {
-			if (p_zpos->plane->zpos_max >
+			if (p_zpos->plane->zpos_max <
 			    plane_zpos->plane->zpos_max)
 				break;
 		}
@@ -153,6 +153,11 @@ drm_output_prepare_overlay_view(struct drm_plane *plane,
 	state->ev = ev;
 	state->output = output;
 
+	/* We hold one reference for the lifetime of this function; from
+	 * calling drm_fb_get_from_view() in drm_output_prepare_plane_view(),
+	 * so, we take another reference here to live within the state. */
+	state->fb = drm_fb_ref(fb);
+
 	if (!drm_plane_state_coords_for_view(state, ev, zpos)) {
 		drm_debug(b, "\t\t\t\t[overlay] not placing view %p on overlay: "
 			     "unsuitable transform\n", ev);
@@ -172,11 +177,6 @@ drm_output_prepare_overlay_view(struct drm_plane *plane,
 		state = NULL;
 		goto out;
 	}
-
-	/* We hold one reference for the lifetime of this function; from
-	 * calling drm_fb_get_from_view() in drm_output_prepare_plane_view(),
-	 * so, we take another reference here to live within the state. */
-	state->fb = drm_fb_ref(fb);
 
 	state->in_fence_fd = ev->surface->acquire_fence_fd;
 
@@ -685,7 +685,7 @@ drm_output_prepare_plane_view(struct drm_output_state *state,
 			      struct weston_view *ev,
 			      enum drm_output_propose_state_mode mode,
 			      struct drm_plane_state *scanout_state,
-			      uint64_t current_lowest_zpos,
+			      uint64_t current_highest_zpos,
 			      uint32_t *try_view_on_plane_failure_reasons)
 {
 	struct drm_output *output = state->output;
@@ -724,18 +724,18 @@ drm_output_prepare_plane_view(struct drm_output_state *state,
 			continue;
 		}
 
-		if (plane->zpos_min >= current_lowest_zpos) {
+		if (plane->zpos_min >= current_highest_zpos) {
 			drm_debug(b, "\t\t\t\t[plane] not adding plane %d to "
-				     "candidate list: minimum zpos (%"PRIu64") "
-				     "plane's above current lowest zpos "
+				     "candidate list: minium zpos (%"PRIu64") "
+				     "plane's above current highest zpos "
 				     "(%"PRIu64")\n", plane->plane_id,
-				     plane->zpos_min, current_lowest_zpos);
+				     plane->zpos_min, current_highest_zpos);
 			continue;
 		}
 
 		if (mode == DRM_OUTPUT_PROPOSE_STATE_MIXED) {
 			assert(scanout_state != NULL);
-			if (scanout_state->zpos >= plane->zpos_max) {
+			if (!b->is_underlay && scanout_state->zpos >= plane->zpos_max) {
 				drm_debug(b, "\t\t\t\t[plane] not adding plane %d to "
 					     "candidate list: primary's zpos "
 					     "value (%"PRIu64") higher than "
@@ -789,10 +789,10 @@ drm_output_prepare_plane_view(struct drm_output_state *state,
 		const char *p_name = drm_output_get_plane_type_name(plane);
 		uint64_t zpos;
 
-		if (current_lowest_zpos == DRM_PLANE_ZPOS_INVALID_PLANE)
+		if (current_highest_zpos == DRM_PLANE_ZPOS_INVALID_PLANE)
 			zpos = plane->zpos_max;
 		else
-			zpos = MIN(current_lowest_zpos - 1, plane->zpos_max);
+			zpos = MIN(current_highest_zpos - 1, plane->zpos_max);
 
 		drm_debug(b, "\t\t\t\t[plane] plane %d picked "
 			     "from candidate list, type: %s\n",
@@ -832,7 +832,7 @@ drm_output_propose_state(struct weston_output *output_base,
 
 	bool renderer_ok = (mode != DRM_OUTPUT_PROPOSE_STATE_PLANES_ONLY);
 	int ret;
-	uint64_t current_lowest_zpos = DRM_PLANE_ZPOS_INVALID_PLANE;
+	uint64_t current_highest_zpos = DRM_PLANE_ZPOS_INVALID_PLANE;
 
 	assert(!output->state_last);
 	state = drm_output_state_duplicate(output->state_cur,
@@ -863,8 +863,14 @@ drm_output_propose_state(struct weston_output *output_base,
 			return NULL;
 		}
 
+#ifdef HAVE_GBM_MODIFIERS
+		int gbm_aligned = drm_fb_get_gbm_alignment (scanout_fb);
+		if (scanout_fb->width != ALIGNTO(output_base->current_mode->width, gbm_aligned) ||
+		    scanout_fb->height != ALIGNTO(output_base->current_mode->height, gbm_aligned)) {
+#else
 		if (scanout_fb->width != output_base->current_mode->width ||
 		    scanout_fb->height != output_base->current_mode->height) {
+#endif
 			drm_debug(b, "\t\t[state] cannot propose mixed mode "
 			             "for output %s (%lu): previous fb has "
 				     "different size\n",
@@ -961,6 +967,16 @@ drm_output_propose_state(struct weston_output *output_base,
 			drm_debug(b, "\t\t\t\t[view] not assigning view %p to plane "
 			             "(no buffer available)\n", ev);
 			force_renderer = true;
+		} else if (b->is_underlay){
+			struct linux_dmabuf_buffer *dmabuf = NULL;
+			struct weston_buffer *buffer = ev->surface->buffer_ref.buffer;
+			dmabuf = linux_dmabuf_buffer_get(buffer->resource);
+			if (dmabuf) {
+				if (dmabuf->attributes.format == DRM_FORMAT_ABGR8888)
+					force_renderer = true;
+				else
+					goto prepare_plane;
+			}
 		}
 
 		if (pnode->surf_xform.transform != NULL ||
@@ -993,12 +1009,13 @@ drm_output_propose_state(struct weston_output *output_base,
 		}
 
 		/* Now try to place it on a plane if we can. */
+prepare_plane:
 		if (!force_renderer) {
 			drm_debug(b, "\t\t\t[plane] started with zpos %"PRIu64"\n",
-				      current_lowest_zpos);
+				      current_highest_zpos);
 			ps = drm_output_prepare_plane_view(state, ev, mode,
 							   scanout_state,
-							   current_lowest_zpos,
+							   current_highest_zpos,
 							   &pnode->try_view_on_plane_failure_reasons);
 			/* If we were able to place the view in a plane, set
 			 * failure reasons to none. */
@@ -1013,9 +1030,9 @@ drm_output_propose_state(struct weston_output *output_base,
 		}
 
 		if (ps) {
-			current_lowest_zpos = ps->zpos;
+			current_highest_zpos = ps->zpos;
 			drm_debug(b, "\t\t\t[plane] next zpos to use %"PRIu64"\n",
-				      current_lowest_zpos);
+				      current_highest_zpos);
 		} else if (!ps && !renderer_ok) {
 			drm_debug(b, "\t\t[view] failing state generation: "
 				      "placing view %p to renderer not allowed\n",

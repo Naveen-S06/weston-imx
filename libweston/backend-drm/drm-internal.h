@@ -41,7 +41,10 @@
 #include <assert.h>
 #include <sys/mman.h>
 #include <time.h>
-
+#if defined(ENABLE_IMXGPU) && defined(ENABLE_IMXG2D)
+#include <g2dExt.h>
+#include "renderer-g2d/g2d-renderer.h"
+#endif
 
 #include <xf86drm.h>
 #include <xf86drmMode.h>
@@ -71,6 +74,8 @@
 #ifndef DRM_PLANE_ZPOS_INVALID_PLANE
 #define DRM_PLANE_ZPOS_INVALID_PLANE	0xffffffffffffffffULL
 #endif
+
+#define ALIGNTO(a, b) ((a + (b-1)) & (~(b-1)))
 
 /**
  * A small wrapper to print information into the 'drm-backend' debug scope.
@@ -162,6 +167,7 @@ enum wdrm_plane_property {
 	WDRM_PLANE_IN_FENCE_FD,
 	WDRM_PLANE_FB_DAMAGE_CLIPS,
 	WDRM_PLANE_ZPOS,
+	WDRM_PLANE_DTRC_META,
 	WDRM_PLANE__COUNT
 };
 
@@ -186,6 +192,7 @@ enum wdrm_connector_property {
 	WDRM_CONNECTOR_CONTENT_PROTECTION,
 	WDRM_CONNECTOR_HDCP_CONTENT_TYPE,
 	WDRM_CONNECTOR_PANEL_ORIENTATION,
+	WDRM_CONNECTOR_HDR10_METADATA,
 	WDRM_CONNECTOR__COUNT
 };
 
@@ -269,6 +276,10 @@ struct drm_backend {
 	struct wl_listener session_listener;
 	uint32_t gbm_format;
 
+	/* hdr10 metadata blob id */
+	unsigned int hdr_blob_id;
+	bool clean_hdr_blob;
+
 	/* we need these parameters in order to not fail drmModeAddFB2()
 	 * due to out of bounds dimensions, and then mistakenly set
 	 * sprites_are_broken:
@@ -292,10 +303,19 @@ struct drm_backend {
 	bool sprites_are_broken;
 	bool cursors_are_broken;
 
+	bool is_underlay;
+
 	bool atomic_modeset;
 
 	bool use_pixman;
+#if defined(ENABLE_IMXGPU) && defined(ENABLE_IMXG2D)
+	bool use_g2d;
+	struct g2d_renderer_interface *g2d_renderer;;
+#endif
 	bool use_pixman_shadow;
+	bool enable_overlay_view;
+	uint32_t shell_width;
+	uint32_t shell_height;
 
 	struct udev_input input;
 
@@ -311,6 +331,8 @@ struct drm_backend {
 	bool fb_modifiers;
 
 	struct weston_log_scope *debug;
+
+	struct weston_drm_format_array supported_formats;
 };
 
 struct drm_mode {
@@ -351,6 +373,8 @@ struct drm_fb {
 
 	/* Used by dumb fbs */
 	void *map;
+
+	uint64_t dtrc_meta;
 };
 
 struct drm_buffer_fb {
@@ -471,6 +495,8 @@ struct drm_plane {
 
 	struct drm_property_info props[WDRM_PLANE__COUNT];
 
+	uint64_t dtrc_meta;
+
 	/* The last state submitted to the kernel for this plane. */
 	struct drm_plane_state *state_cur;
 
@@ -561,8 +587,12 @@ struct drm_output {
 	 * yet acknowledged completion of state_cur. */
 	struct drm_output_state *state_last;
 
-	struct drm_fb *dumb[2];
-	pixman_image_t *image[2];
+	struct drm_fb *dumb[3];
+	pixman_image_t *image[3];
+#if defined(ENABLE_IMXGPU) && defined(ENABLE_IMXG2D)
+	struct g2d_surfaceEx g2d_image[3];
+	int dumb_dmafd[3];
+#endif
 	int current_image;
 	pixman_region32_t previous_damage;
 
@@ -574,6 +604,8 @@ struct drm_output {
 	bool virtual;
 
 	submit_frame_cb virtual_submit_frame;
+
+	int (*surface_get_in_fence_fd)(struct gbm_surface *surface);
 };
 
 static inline struct drm_head *
@@ -825,6 +857,7 @@ drm_backend_init_virtual_output_api(struct weston_compositor *compositor)
 #endif
 
 #ifdef BUILD_DRM_GBM
+#if defined(ENABLE_IMXGPU) && defined(ENABLE_OPENGL)
 int
 init_egl(struct drm_backend *b);
 
@@ -840,6 +873,24 @@ drm_output_render_gl(struct drm_output_state *state, pixman_region32_t *damage);
 void
 renderer_switch_binding(struct weston_keyboard *keyboard,
 			const struct timespec *time, uint32_t key, void *data);
+#endif
+#if defined(ENABLE_IMXGPU) && defined(ENABLE_IMXG2D)
+int
+init_g2d(struct drm_backend *b);
+
+int
+drm_output_init_g2d(struct drm_output *output, struct drm_backend *b);
+
+void
+drm_output_fini_g2d(struct drm_output *output);
+
+struct drm_fb *
+drm_output_render_g2d(struct drm_output_state *state, pixman_region32_t *damage);
+
+#endif
+
+int
+drm_fb_get_gbm_alignment(struct drm_fb *fb);
 #else
 inline static int
 init_egl(struct drm_backend *b)

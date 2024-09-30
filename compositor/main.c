@@ -692,7 +692,16 @@ usage(int error_code)
 #ifdef BUILD_DRM_LEASE_CLIENT
 		"  --drm-lease=lease\tUse the specified DRM lease. e.g \"card0-HDMI-A-1\"\n"
 #endif
-		"  --use-pixman\t\tUse the pixman (CPU) renderer\n"
+#if defined(ENABLE_IMXGPU)
+#if defined(ENABLE_OPENGL)
+               "  --use-pixman\t\tUse the pixman (CPU) renderer (default: GL rendering)\n"
+#elif defined(ENABLE_IMXG2D)
+               "  --use-pixman\t\tUse the pixman (CPU) renderer (default: G2D rendering)\n"
+#endif
+#if defined(ENABLE_OPENGL) && defined(ENABLE_IMXG2D)
+               "  --use-g2d=1\t\tUse the G2D renderer (default: GL rendering)\n"
+#endif
+#endif
 		"  --current-mode\tPrefer current KMS mode over EDID preferred mode\n"
 		"  --continue-without-input\tAllow the compositor to start without input devices\n\n");
 #endif
@@ -702,6 +711,21 @@ usage(int error_code)
 		"Options for fbdev-backend.so:\n\n"
 		"  --tty=TTY\t\tThe tty to use\n"
 		"  --device=DEVICE\tThe framebuffer device to use\n"
+#if defined(ENABLE_IMXGPU)
+#if defined(ENABLE_OPENGL)
+               "  --use-pixman\t\tUse the pixman (CPU) renderer (default: GL rendering)\n"
+#elif defined(ENABLE_IMXG2D)
+               "  --use-pixman\t\tUse the pixman (CPU) renderer (default: G2D rendering)\n"
+#endif
+#if defined(ENABLE_OPENGL) && defined(ENABLE_IMXG2D)
+               "  --use-g2d=1\t\tUse the G2D renderer (default: GL rendering)\n"
+#endif
+#if defined(ENABLE_IMXG2D)
+               "  --device=DEVICE[,DEVICE]...\n"
+               "  \t\t\tG2D-only: The framebuffer device(s) to use\n"
+               "  --clone-mode\t\tG2D-only: Duplicate the display on the specified devices\n"
+#endif
+#endif
 		"  --seat=SEAT\t\tThe seat that weston should run on, instead of the seat defined in XDG_SEAT\n"
 		"\n");
 #endif
@@ -874,29 +898,24 @@ handle_primary_client_destroyed(struct wl_listener *listener, void *data)
 static int
 weston_create_listening_socket(struct wl_display *display, const char *socket_name)
 {
-	char name_candidate[16];
-
 	if (socket_name) {
 		if (wl_display_add_socket(display, socket_name)) {
 			weston_log("fatal: failed to add socket: %s\n",
 				   strerror(errno));
 			return -1;
 		}
-
-		setenv("WAYLAND_DISPLAY", socket_name, 1);
-		return 0;
 	} else {
-		for (int i = 1; i <= 32; i++) {
-			sprintf(name_candidate, "wayland-%d", i);
-			if (wl_display_add_socket(display, name_candidate) >= 0) {
-				setenv("WAYLAND_DISPLAY", name_candidate, 1);
-				return 0;
-			}
+		socket_name = wl_display_add_socket_auto(display);
+		if (!socket_name) {
+			weston_log("fatal: failed to add socket: %s\n",
+				   strerror(errno));
+			return -1;
 		}
-		weston_log("fatal: failed to add socket: %s\n",
-			   strerror(errno));
-		return -1;
 	}
+
+	setenv("WAYLAND_DISPLAY", socket_name, 1);
+
+	return 0;
 }
 
 WL_EXPORT void *
@@ -2622,6 +2641,33 @@ load_pipewire(struct weston_compositor *c, struct weston_config *wc)
 	}
 }
 
+static void
+drm_backend_shell_configure(struct weston_compositor *c,
+		struct weston_drm_backend_config *config)
+{
+	struct weston_config_section *section;
+	section = weston_config_get_section(wet_get_config(c),
+					    "shell", NULL, NULL);
+
+	if (section) {
+		char *size;
+		int n;
+		uint32_t width = 0;
+		uint32_t height = 0;
+
+		weston_config_section_get_string(section, "size", &size, NULL);
+
+		if(size){
+			n = sscanf(size, "%dx%d", &width, &height);
+			if (n == 2 && width > 0 && height > 0) {
+				config->shell_width  = width;
+				config->shell_height = height;
+			}
+			free(size);
+		}
+	}
+}
+
 static int
 load_drm_backend(struct weston_compositor *c,
 		 int *argc, char **argv, struct weston_config *wc)
@@ -2632,12 +2678,19 @@ load_drm_backend(struct weston_compositor *c,
 	bool without_input = false;
 	int ret = 0;
 	char *drm_lease_name = NULL;
+#if defined(ENABLE_IMXG2D)
+	uint32_t use_g2d;
+#endif
+	bool use_pixman_config_ = false;
+	bool use_pixman_ = false;
+	uint32_t enable_overlay_view;
 
 	wet->drm_use_current_mode = false;
 
 	section = weston_config_get_section(wc, "core", NULL, NULL);
-	weston_config_section_get_bool(section, "use-pixman", &config.use_pixman,
+	weston_config_section_get_bool(section, "use-pixman", &use_pixman_config_,
 				       false);
+	use_pixman_ = use_pixman_config_;
 
 	const struct weston_option options[] = {
 		{ WESTON_OPTION_STRING, "seat", 0, &config.seat_id },
@@ -2645,12 +2698,25 @@ load_drm_backend(struct weston_compositor *c,
 		{ WESTON_OPTION_STRING, "drm-device", 0, &config.specific_device },
 		{ WESTON_OPTION_STRING, "drm-lease", 0, &drm_lease_name },
 		{ WESTON_OPTION_BOOLEAN, "current-mode", 0, &wet->drm_use_current_mode },
-		{ WESTON_OPTION_BOOLEAN, "use-pixman", 0, &config.use_pixman },
+#if defined(ENABLE_IMXGPU)
+#if defined(ENABLE_OPENGL) || defined(ENABLE_IMXG2D)
+		{ WESTON_OPTION_BOOLEAN, "use-pixman", 0, &use_pixman_ },
+#endif
+#if defined(ENABLE_OPENGL) && defined(ENABLE_IMXG2D)
+		{ WESTON_OPTION_INTEGER, "use-g2d", 0, &config.use_g2d },
+#endif
+#endif
+		{ WESTON_OPTION_INTEGER, "enable-overlay-view", 0, &config.enable_overlay_view },
 		{ WESTON_OPTION_BOOLEAN, "continue-without-input", false, &without_input }
 	};
 
 	parse_options(options, ARRAY_LENGTH(options), argc, argv);
+#if !defined(ENABLE_IMXGPU) || !defined(ENABLE_OPENGL) && !defined(ENABLE_IMXG2D)
+	config.use_pixman = use_pixman_;
 
+#elif !defined(ENABLE_OPENGL)
+	config.use_g2d = 1;
+#endif
 	section = weston_config_get_section(wc, "core", NULL, NULL);
 	weston_config_section_get_string(section,
 					 "gbm-format", &config.gbm_format,
@@ -2661,15 +2727,23 @@ load_drm_backend(struct weston_compositor *c,
 				       &config.use_pixman_shadow, true);
 	if (without_input)
 		c->require_input = !without_input;
+#if defined(ENABLE_IMXG2D)
+	weston_config_section_get_uint(section, "use-g2d", &use_g2d, 0);
+	config.use_g2d = config.use_g2d || use_g2d;
+#endif
 
+	weston_config_section_get_string(section, "drm-device", &config.specific_device, "");
+	weston_config_section_get_uint(section, "enable-overlay-view", &enable_overlay_view, 0);
+	config.enable_overlay_view = enable_overlay_view;
 	config.base.struct_version = WESTON_DRM_BACKEND_CONFIG_VERSION;
 	config.base.struct_size = sizeof(struct weston_drm_backend_config);
 	config.configure_device = configure_input_device;
-	config.device_fd = get_drm_lease(&wet->drm_lease, drm_lease_name);
 
 	wet->heads_changed_listener.notify = drm_heads_changed;
 	weston_compositor_add_heads_changed_listener(c,
 						&wet->heads_changed_listener);
+
+	drm_backend_shell_configure(c, &config);
 
 	ret = weston_compositor_load_backend(c, WESTON_BACKEND_DRM,
 					     &config.base);
@@ -2885,18 +2959,46 @@ load_fbdev_backend(struct weston_compositor *c,
 {
 	struct weston_fbdev_backend_config config = {{ 0, }};
 	int ret = 0;
+#if defined(ENABLE_IMXG2D)
+	struct weston_config_section *section;
+	uint32_t use_g2d;
+#endif
 
 	const struct weston_option fbdev_options[] = {
 		{ WESTON_OPTION_INTEGER, "tty", 0, &config.tty },
 		{ WESTON_OPTION_STRING, "device", 0, &config.device },
 		{ WESTON_OPTION_STRING, "seat", 0, &config.seat_id },
+#if defined(ENABLE_IMXGPU)
+#if defined(ENABLE_OPENGL) || defined(ENABLE_IMXG2D)
+		{ WESTON_OPTION_BOOLEAN, "use-pixman", 0, &config.use_pixman },
+#endif
+#if defined(ENABLE_OPENGL) && defined(ENABLE_IMXG2D)
+		{ WESTON_OPTION_INTEGER, "use-g2d", 0, &config.use_g2d },
+#endif
+#if defined(ENABLE_IMXG2D)
+		{ WESTON_OPTION_BOOLEAN, "clone-mode", 0, &config.clone_mode },
+#endif
+#endif
 	};
 
 	parse_options(fbdev_options, ARRAY_LENGTH(fbdev_options), argc, argv);
 
+#if !defined(ENABLE_IMXGPU) || !defined(ENABLE_OPENGL) && !defined(ENABLE_IMXG2D)
+	config.use_pixman = 1;
+#elif !defined(ENABLE_OPENGL)
+	config.use_g2d = 1;
+#endif
+
+#if defined(ENABLE_IMXG2D)
+	section = weston_config_get_section(wc, "core", NULL, NULL);
+	weston_config_section_get_uint(section, "use-g2d", &use_g2d, 0);
+	config.use_g2d = config.use_g2d || use_g2d;
+#endif
+
 	config.base.struct_version = WESTON_FBDEV_BACKEND_CONFIG_VERSION;
 	config.base.struct_size = sizeof(struct weston_fbdev_backend_config);
 	config.configure_device = configure_input_device;
+	config.device_fd = get_drm_lease(&wet->drm_lease, drm_lease_name);
 
 	wet_set_simple_head_configurator(c, fbdev_backend_output_configure);
 
@@ -3275,6 +3377,18 @@ weston_log_subscribe_to_scopes(struct weston_log_context *log_ctx,
 		weston_log_setup_scopes(log_ctx, flight_rec, flight_rec_scopes);
 }
 
+static void
+wet_set_environment_variables(struct weston_compositor *c)
+{
+	struct weston_config_section *section;
+
+	section = weston_config_get_section(wet_get_config(c),
+					    "environment-variables", NULL, NULL);
+	if (section) {
+		weston_config_set_env(section);
+	}
+}
+
 WL_EXPORT int
 wet_main(int argc, char *argv[], const struct weston_testsuite_data *test_data)
 {
@@ -3473,6 +3587,8 @@ wet_main(int argc, char *argv[], const struct weston_testsuite_data *test_data)
 
 	weston_config_section_get_bool(section, "require-input",
 				       &wet.compositor->require_input, true);
+
+	wet_set_environment_variables(wet.compositor);
 
 	if (load_backend(wet.compositor, backend, &argc, argv, config) < 0) {
 		weston_log("fatal: failed to create compositor backend\n");

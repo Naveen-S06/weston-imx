@@ -43,6 +43,8 @@
 #include "drm-internal.h"
 #include "linux-dmabuf.h"
 
+#define ALIGNTO(a, b) ((a + (b-1)) & (~(b-1)))
+
 static void
 drm_fb_destroy(struct drm_fb *fb)
 {
@@ -73,6 +75,7 @@ drm_fb_addfb(struct drm_backend *b, struct drm_fb *fb)
 {
 	int ret = -EINVAL;
 	uint64_t mods[4] = { };
+	int width, height;
 	size_t i;
 
 	/* If we have a modifier set, we must only use the WithModifiers
@@ -82,7 +85,17 @@ drm_fb_addfb(struct drm_backend *b, struct drm_fb *fb)
 		 * for all planes. */
 		for (i = 0; i < ARRAY_LENGTH(mods) && fb->handles[i]; i++)
 			mods[i] = fb->modifier;
-		ret = drmModeAddFB2WithModifiers(fb->fd, fb->width, fb->height,
+		if (fb->modifier == DRM_FORMAT_MOD_AMPHION_TILED) {
+			width = ALIGNTO (fb->width, 8);
+			height = ALIGNTO (fb->height, 256);
+		}else if(fb->modifier ==DRM_FORMAT_MOD_VIVANTE_SUPER_TILED){
+			width = ALIGNTO (fb->width, 64);
+			height = ALIGNTO (fb->height, 64);
+		} else {
+			width = fb->width;
+			height = fb->height;
+		}
+		ret = drmModeAddFB2WithModifiers(fb->fd, width, height,
 						 fb->format->format,
 						 fb->handles, fb->strides,
 						 fb->offsets, mods, &fb->fb_id,
@@ -216,6 +229,42 @@ drm_fb_destroy_dmabuf(struct drm_fb *fb)
 	drm_fb_destroy(fb);
 }
 
+#ifdef HAVE_GBM_MODIFIERS
+int
+drm_fb_get_gbm_alignment(struct drm_fb *fb)
+{
+       int gbm_aligned = 64;
+
+       if (fb){
+               switch(fb->modifier) {
+#if defined(ENABLE_IMXGPU)
+                       case DRM_FORMAT_MOD_VIVANTE_SUPER_TILED_FC:
+                       case DRM_FORMAT_MOD_VIVANTE_SUPER_TILED:
+                               gbm_aligned = 64;
+                               break;
+#endif
+                       default:
+                               break;
+               }
+       }
+       return gbm_aligned;
+}
+#endif
+static void
+drm_close_gem_handle(struct linux_dmabuf_buffer *dmabuf)
+{
+	struct drm_backend *b = to_drm_backend(dmabuf->compositor);
+	int i;
+
+	if (dmabuf->gem_handles[0] != 0) {
+		for (i = 0; i < dmabuf->attributes.n_planes; i++) {
+			struct drm_gem_close arg = { dmabuf->gem_handles[i], };
+			drmIoctl (b->drm.fd, DRM_IOCTL_GEM_CLOSE, &arg);
+			dmabuf->gem_handles[i] = 0;
+		}
+	}
+}
+
 static struct drm_fb *
 drm_fb_get_from_dmabuf(struct linux_dmabuf_buffer *dmabuf,
 		       struct drm_backend *backend, bool is_opaque,
@@ -229,6 +278,7 @@ drm_fb_get_from_dmabuf(struct linux_dmabuf_buffer *dmabuf,
 #else
 	struct drm_fb *fb;
 	int i;
+	uint32_t gem_handle[MAX_DMABUF_PLANES] = {0};
 	struct gbm_import_fd_modifier_data import_mod = {
 		.width = dmabuf->attributes.width,
 		.height = dmabuf->attributes.height,
@@ -269,23 +319,10 @@ drm_fb_get_from_dmabuf(struct linux_dmabuf_buffer *dmabuf,
 
 	fb->refcnt = 1;
 	fb->type = BUFFER_DMABUF;
-
-	ARRAY_COPY(import_mod.fds, dmabuf->attributes.fd);
-	ARRAY_COPY(import_mod.strides, dmabuf->attributes.stride);
-	ARRAY_COPY(import_mod.offsets, dmabuf->attributes.offset);
-
-	fb->bo = gbm_bo_import(backend->gbm, GBM_BO_IMPORT_FD_MODIFIER,
-			       &import_mod, GBM_BO_USE_SCANOUT);
-	if (!fb->bo) {
-		if (try_view_on_plane_failure_reasons)
-			*try_view_on_plane_failure_reasons |=
-				FAILURE_REASONS_GBM_BO_IMPORT_FAILED;
-		goto err_free;
-	}
-
 	fb->width = dmabuf->attributes.width;
 	fb->height = dmabuf->attributes.height;
 	fb->modifier = dmabuf->attributes.modifier[0];
+	fb->dtrc_meta = dmabuf->attributes.dtrc_meta;
 	fb->size = 0;
 	fb->fd = backend->drm.fd;
 
@@ -311,6 +348,35 @@ drm_fb_get_from_dmabuf(struct linux_dmabuf_buffer *dmabuf,
 	}
 
 	fb->num_planes = dmabuf->attributes.n_planes;
+	if (dmabuf->gem_handles[0] == 0) {
+		for (i = 0; i < dmabuf->attributes.n_planes; i++) {
+			int ret;
+			ret = drmPrimeFDToHandle (fb->fd, dmabuf->attributes.fd[i], &gem_handle[i]);
+			if (ret) {
+				weston_log ("got gem_handle %x\n", gem_handle[i]);
+				goto err_free;
+			}
+			fb->handles[i] = dmabuf->gem_handles[i] = gem_handle[i];
+		}
+		linux_dmabuf_buffer_gem_handle_close_cb (dmabuf, drm_close_gem_handle);
+	} else {
+		for (i = 0; i < dmabuf->attributes.n_planes; i++)
+			fb->handles[i] = dmabuf->gem_handles[i];
+	}
+
+	if (fb->handles[0] != 0)
+		goto add_fb;
+
+	ARRAY_COPY(import_mod.fds, dmabuf->attributes.fd);
+	ARRAY_COPY(import_mod.strides, dmabuf->attributes.stride);
+	ARRAY_COPY(import_mod.offsets, dmabuf->attributes.offset);
+
+	fb->bo = gbm_bo_import(backend->gbm, GBM_BO_IMPORT_FD_MODIFIER,
+			       &import_mod, GBM_BO_USE_SCANOUT);
+	if (!fb->bo)
+		goto err_free;
+
+	fb->num_planes = dmabuf->attributes.n_planes;
 	for (i = 0; i < dmabuf->attributes.n_planes; i++) {
 		union gbm_bo_handle handle;
 
@@ -320,6 +386,7 @@ drm_fb_get_from_dmabuf(struct linux_dmabuf_buffer *dmabuf,
 		fb->handles[i] = handle.u32;
 	}
 
+add_fb:
 	if (drm_fb_addfb(backend, fb) != 0) {
 		if (try_view_on_plane_failure_reasons)
 			*try_view_on_plane_failure_reasons |=
@@ -383,11 +450,6 @@ drm_fb_get_from_bo(struct gbm_bo *bo, struct drm_backend *backend,
 			   (unsigned long) gbm_bo_get_format(bo));
 		goto err_free;
 	}
-
-	/* We can scanout an ARGB buffer if the surface's opaque region covers
-	 * the whole output, but we have to use XRGB as the KMS format code. */
-	if (is_opaque)
-		fb->format = pixel_format_get_opaque_substitute(fb->format);
 
 	if (backend->min_width > fb->width ||
 	    fb->width > backend->max_width ||
@@ -568,10 +630,13 @@ drm_fb_get_from_view(struct drm_output_state *state, struct weston_view *ev,
 		if (!fb)
 			goto unsuitable;
 	} else {
-		struct gbm_bo *bo;
+		struct gbm_bo *bo = NULL;
 
-		bo = gbm_bo_import(b->gbm, GBM_BO_IMPORT_WL_BUFFER,
-				   buffer->resource, GBM_BO_USE_SCANOUT);
+		if(b->enable_overlay_view)
+		{
+			bo = gbm_bo_import(b->gbm, GBM_BO_IMPORT_WL_BUFFER,
+					   buffer->resource, GBM_BO_USE_SCANOUT);
+		}
 		if (!bo)
 			goto unsuitable;
 
