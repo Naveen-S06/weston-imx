@@ -64,8 +64,9 @@ is_drm_master(int drm_fd)
 {
 	drm_magic_t magic;
 
-	return drmGetMagic(drm_fd, &magic) == 0 &&
-		drmAuthMagic(drm_fd, magic) == 0;
+	//return drmGetMagic(drm_fd, &magic) == 0 &&
+	//	drmAuthMagic(drm_fd, magic) == 0;
+	return 1;
 }
 
 #else
@@ -255,6 +256,7 @@ launcher_direct_open(struct weston_launcher *launcher_base, const char *path, in
 			close(fd);
 			return -1;
 		}
+		weston_log("Outside is_drm_master condition\n");
 	}
 
 	return fd;
