@@ -1,6 +1,6 @@
-if not get_option('deprecated-backend-fbdev')
-	subdir_done()
-endif
+#if not get_option('deprecated-backend-fbdev')
+#	subdir_done()
+#endif
 
 warning('Support for the deprecated fbdev backend is enabled.')
 warning('This feature will be removed in a future version.')
