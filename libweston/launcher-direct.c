@@ -65,8 +65,8 @@ is_drm_master(int drm_fd)
 	drm_magic_t magic;
 	int ret_get_magic = drmGetMagic(drm_fd, &magic);
 	int ret_auth_magic = drmAuthMagic(drm_fd, magic);
-	weston_log("drmGetMagic result: %d, magic value: %u\n", ret_get_magic, magic);
-	weston_log("drmAuthMagic result: %d\, magic value: %u\n", ret_auth_magic,magic);
+	weston_log("drmGetMagic result: 0x%x, magic value: 0x%x\n", ret_get_magic, magic);
+	weston_log("drmAuthMagic result: 0x%x\, magic value: 0x%x\n", ret_auth_magic,magic);
 	//return drmGetMagic(drm_fd, &magic) == 0 &&
 	//	drmAuthMagic(drm_fd, magic) == 0;
 	return 1;
