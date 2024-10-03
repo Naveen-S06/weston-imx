@@ -182,7 +182,7 @@ static bool
 weston_log_file_open(const char *filename)
 {
 	wl_log_set_handler_server(custom_handler);
-	weston_log("Opening: %s\n",filename);
+
 	if (filename != NULL) {
 		weston_logfile = fopen(filename, "a");
 		if (weston_logfile) {

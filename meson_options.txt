@@ -44,7 +44,12 @@ option(
 	value: true,
 	description: 'Weston backend: X11 (nested)'
 )
-
+option(
+	'deprecated-backend-fbdev',
+	type: 'boolean',
+	value: false,
+	description: 'Weston backend: fbdev (deprecated)'
+)
 option(
 	'backend-default',
 	type: 'combo',
@@ -58,34 +63,6 @@ option(
 	type: 'boolean',
 	value: true,
 	description: 'Weston renderer: EGL / OpenGL ES 2.x'
-)
-
-option(
-	'renderer-g2d',
-	type: 'boolean',
-	value: true,
-	description: 'Weston renderer: G2D, i.MX G2D support'
-)
-
-option(
-	'egl',
-	type: 'boolean',
-	value: true,
-	description: 'Weston enable EGL'
-)
-
-option(
-	'opengl',
-	type: 'boolean',
-	value: true,
-	description: 'Build Weston with OpenGL support'
-)
-
-option(
-	'imxgpu',
-	type: 'boolean',
-	value: true,
-	description: 'Build Weston with i.MX GPU driver support'
 )
 
 option(
